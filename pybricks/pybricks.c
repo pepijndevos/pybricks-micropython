@@ -40,9 +40,22 @@ STATIC void pb_package_pybricks_attr(mp_obj_t self_in, qstr attr, mp_obj_t *dest
 }
 #endif
 
+STATIC bool pb_package_pybricks_use_async_mode;
+
+bool pb_package_pybricks_uses_async_mode() {
+    return pb_package_pybricks_use_async_mode;
+}
+
+STATIC mp_obj_t pb_package_pybricks_set_async_mode(mp_obj_t self_in) {
+    pb_package_pybricks_use_async_mode = mp_obj_is_true(self_in);
+    return mp_const_none;
+}
+MP_DEFINE_CONST_FUN_OBJ_1(pb_package_pybricks_set_async_mode_obj, pb_package_pybricks_set_async_mode);
+
 STATIC const mp_rom_map_elem_t pybricks_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__),            MP_ROM_QSTR(MP_QSTR_pybricks) },
     { MP_ROM_QSTR(MP_QSTR_version),             MP_ROM_PTR(&pybricks_info_obj)},
+    { MP_ROM_QSTR(MP_QSTR_set_async_mode),      MP_ROM_PTR(&pb_package_pybricks_set_async_mode_obj)},
     #if MICROPY_MODULE_ATTR_DELEGATION
     MP_MODULE_ATTR_DELEGATION_ENTRY(&pb_package_pybricks_attr),
     #endif
@@ -101,6 +114,8 @@ void pb_package_pybricks_init(bool import_all) {
     if (nlr_push(&nlr) == 0) {
         // Initialize the package.
         pb_type_Color_reset();
+        // Initialize async mode as blocking.
+        pb_package_pybricks_set_async_mode(mp_const_false);
         // Import all if requested.
         if (import_all) {
             pb_package_import_all();

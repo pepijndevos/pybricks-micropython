@@ -21,6 +21,7 @@
 
 #include <pybricks/parameters.h>
 
+bool pb_package_pybricks_uses_async_mode();
 void pb_package_pybricks_init(bool import_all);
 void pb_package_pybricks_deinit(void);
 
