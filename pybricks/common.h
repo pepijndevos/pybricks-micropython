@@ -82,8 +82,33 @@ mp_obj_t common_Control_obj_make_new(pbio_control_t *control);
 mp_obj_t common_Logger_obj_make_new(pbio_log_t *log, uint8_t num_values);
 #endif
 
+typedef struct _common_Motor_obj_t common_Motor_obj_t;
+
+typedef struct _pb_type_MotorWait_obj_t pb_type_MotorWait_obj_t;
+
+/**
+ * A generator-like type for waiting on a motor operation to complete.
+ */
+struct _pb_type_MotorWait_obj_t {
+    mp_obj_base_t base;
+    /**
+     * Motor object whose move this generator is awaiting on.
+     */
+    common_Motor_obj_t *motor_obj;
+    /**
+     * Voltage cap prior to starting. Only applicable for run_until_stalled.
+     *
+     * Set to -1 to indicate that this is not used.
+     */
+    int32_t stall_voltage_restore_value;
+    /**
+     * What to do once stalled. Only applicable for run_until_stalled.
+     */
+    pbio_control_on_completion_t stall_stop_type;
+};
+
 // pybricks._common.Motor()
-typedef struct _common_Motor_obj_t {
+struct _common_Motor_obj_t {
     mp_obj_base_t base;
     pbio_servo_t *srv;
     #if PYBRICKS_PY_COMMON_CONTROL
@@ -93,7 +118,7 @@ typedef struct _common_Motor_obj_t {
     mp_obj_t logger;
     #endif
     pbio_port_id_t port;
-} common_Motor_obj_t;
+};
 
 extern const mp_obj_type_t pb_type_Motor;
 
