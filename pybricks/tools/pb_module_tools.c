@@ -23,7 +23,7 @@ STATIC mp_obj_t tools_wait(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw
 
     // In async mode, return awaitable.
     if (pb_package_pybricks_uses_async_mode()) {
-        return pb_type_tools_wait_new(time);
+        return pb_type_tools_wait_new(time, NULL);
     }
 
     // In blocking mode, wait until done.
