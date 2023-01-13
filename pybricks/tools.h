@@ -12,6 +12,8 @@
 
 void pb_type_tools_wait_reset(void);
 
+mp_obj_t pb_type_tools_wait_new(mp_int_t duration);
+
 extern const mp_obj_type_t pb_type_StopWatch;
 
 #endif // PYBRICKS_PY_TOOLS
