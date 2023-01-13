@@ -14,6 +14,7 @@
 #include <pybricks/hubs.h>
 #include <pybricks/parameters.h>
 #include <pybricks/pupdevices.h>
+#include <pybricks/tools.h>
 
 #include "genhdr/mpversion.h"
 
@@ -116,6 +117,7 @@ void pb_package_pybricks_init(bool import_all) {
         pb_type_Color_reset();
         // Initialize async mode as blocking.
         pb_package_pybricks_set_async_mode(mp_const_false);
+        pb_type_tools_wait_reset();
         // Import all if requested.
         if (import_all) {
             pb_package_import_all();
