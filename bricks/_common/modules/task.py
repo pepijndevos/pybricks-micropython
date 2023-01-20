@@ -1,9 +1,8 @@
 from pybricks import set_async_mode
+from pybricks.tools import wait as _wait
 
-set_async_mode(True)
 
-
-def run_parallel(*tasks):
+def all(*tasks):
     completed = {t: False for t in tasks}
     all_done = False
     while not all_done:
@@ -18,16 +17,15 @@ def run_parallel(*tasks):
                 yield
 
 
-main_done = False
+# Revisit: Implement completely separately from pybricks.tools.wait
+def wait(time):
+    yield from _wait(time)
 
 
-def main(main_task):
-    # Make sure this is used only once.
-    global main_done
-    if main_done:
-        raise RuntimeError("Can have only one main program.")
-    main_done = True
-
-    # Run the main program
-    for _ in main_task():
-        pass
+def run(main_task):
+    set_async_mode(True)
+    try:
+        for _ in main_task:
+            pass
+    finally:
+        set_async_mode(False)
