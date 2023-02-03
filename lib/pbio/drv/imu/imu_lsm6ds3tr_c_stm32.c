@@ -7,7 +7,7 @@
 #include <pbdrv/config.h>
 
 #if PBDRV_CONFIG_IMU_LSM6S3TR_C_STM32
-
+#include <math.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <string.h>
@@ -46,6 +46,15 @@ struct _pbdrv_imu_dev_t {
     float accel_scale;
     /** Raw data. */
     int16_t data[6];
+    /** Gyroscope rate offset */
+    float gyro_bias[3];
+    /** quaternion estimation */
+    float q[4];
+    uint32_t prev_sample_time;
+    float ki;
+    float kp;
+    uint32_t sample_count;
+    bool calibrating;
     /** Initialization state. */
     imu_init_state_t init_state;
     /** INT1 oneshot. */
@@ -133,6 +142,73 @@ static void pbdrv_imu_lsm6ds3tr_c_stm32_read_reg(void *handle, uint8_t reg, uint
     }
 }
 
+static void mahony_update(pbdrv_imu_dev_t *imu_dev, float ax, float ay, float az, float gx, float gy, float gz, float dt) {
+    float recip_norm;
+    float vx, vy, vz;
+    float ex, ey, ez; // error terms
+    float qa, qb, qc;
+    float q[4] = { imu_dev->q[0], imu_dev->q[1], imu_dev->q[2], imu_dev->q[3] };
+    static float ix, iy, iz; // integral feedback terms
+    float tmp;
+
+    // Compute feedback only if accelerometer measurement valid (avoids NaN in accelerometer normalisation)
+    tmp = ax * ax + ay * ay + az * az;
+
+    if (tmp > 0.0f) {
+        // Normalise accelerometer (assumed to measure the direction of gravity in body frame)
+        recip_norm = 1.0f / sqrtf(tmp);
+        ax *= recip_norm;
+        ay *= recip_norm;
+        az *= recip_norm;
+
+        // Estimated direction of gravity in the body frame (factor of two divided out)
+        vx = q[1] * q[3] - q[0] * q[2];
+        vy = q[0] * q[1] + q[2] * q[3];
+        vz = q[0] * q[0] - 0.5f + q[3] * q[3];
+
+        // Error is cross product between estimated and measured direction of gravity in body frame
+        // (half the actual magnitude)
+        ex = ay * vz - az * vy;
+        ey = az * vx - ax * vz;
+        ez = ax * vy - ay * vx;
+
+        // Compute and apply to gyro term the integral feedback, if enabled
+        if (imu_dev->ki > 0.0f) {
+            ix += imu_dev->ki * ex * dt; // integral error scaled by ki
+            iy += imu_dev->ki * ey * dt;
+            iz += imu_dev->ki * ez * dt;
+            gx += ix; // apply integral feedback
+            gy += iy;
+            gz += iz;
+        }
+
+        // Apply proportional feedback to gyro term
+        gx += imu_dev->kp * ex;
+        gy += imu_dev->kp * ey;
+        gz += imu_dev->kp * ez;
+    }
+
+    // Integrate rate of change of quaternion, q cross gyro term
+    dt *= 0.5f;
+    gx *= dt; // pre-multiply common factors
+    gy *= dt;
+    gz *= dt;
+    qa = imu_dev->q[0];
+    qb = imu_dev->q[1];
+    qc = imu_dev->q[2];
+    q[0] += -qb * gx - qc * gy - q[3] * gz;
+    q[1] += qa * gx + qc * gz - q[3] * gy;
+    q[2] += qa * gy - qb * gz + q[3] * gx;
+    q[3] += qa * gz + qb * gy - qc * gx;
+
+    // renormalise quaternion
+    recip_norm = 1.0f / sqrtf(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+    imu_dev->q[0] = q[0] * recip_norm;
+    imu_dev->q[1] = q[1] * recip_norm;
+    imu_dev->q[2] = q[2] * recip_norm;
+    imu_dev->q[3] = q[3] * recip_norm;
+}
+
 static PT_THREAD(pbdrv_imu_lsm6ds3tr_c_stm32_init(struct pt *pt)) {
     const pbdrv_imu_lsm6s3tr_c_stm32_platform_data_t *pdata = &pbdrv_imu_lsm6s3tr_c_stm32_platform_data;
     pbdrv_imu_dev_t *imu_dev = &global_imu_dev;
@@ -185,8 +261,8 @@ static PT_THREAD(pbdrv_imu_lsm6ds3tr_c_stm32_init(struct pt *pt)) {
     /*
      * Set Output Data Rate
      */
-    PT_SPAWN(pt, &child, lsm6ds3tr_c_xl_data_rate_set(&child, ctx, LSM6DS3TR_C_XL_ODR_833Hz));
-    PT_SPAWN(pt, &child, lsm6ds3tr_c_gy_data_rate_set(&child, ctx, LSM6DS3TR_C_GY_ODR_833Hz));
+    PT_SPAWN(pt, &child, lsm6ds3tr_c_xl_data_rate_set(&child, ctx, LSM6DS3TR_C_XL_ODR_1k66Hz));
+    PT_SPAWN(pt, &child, lsm6ds3tr_c_gy_data_rate_set(&child, ctx, LSM6DS3TR_C_GY_ODR_1k66Hz));
 
     /*
      * Set scale
@@ -194,8 +270,8 @@ static PT_THREAD(pbdrv_imu_lsm6ds3tr_c_stm32_init(struct pt *pt)) {
     PT_SPAWN(pt, &child, lsm6ds3tr_c_xl_full_scale_set(&child, ctx, LSM6DS3TR_C_8g));
     imu_dev->accel_scale = lsm6ds3tr_c_from_fs8g_to_mg(1) * 9.81f;
 
-    PT_SPAWN(pt, &child, lsm6ds3tr_c_gy_full_scale_set(&child, ctx, LSM6DS3TR_C_1000dps));
-    imu_dev->gyro_scale = lsm6ds3tr_c_from_fs1000dps_to_mdps(1) / 1000.0f;
+    PT_SPAWN(pt, &child, lsm6ds3tr_c_gy_full_scale_set(&child, ctx, LSM6DS3TR_C_2000dps));
+    imu_dev->gyro_scale = lsm6ds3tr_c_from_fs2000dps_to_mdps(1) / 1000.0f;
 
     // Configure INT1 to trigger when new gyro data is ready.
     PT_SPAWN(pt, &child, lsm6ds3tr_c_pin_int1_route_set(&child, ctx, (lsm6ds3tr_c_int1_route_t) {
@@ -213,9 +289,51 @@ static PT_THREAD(pbdrv_imu_lsm6ds3tr_c_stm32_init(struct pt *pt)) {
         PT_EXIT(pt);
     }
 
+    // Sets initial values for Orientation estimation
+    imu_dev->gyro_bias[0] = 0.0f;
+    imu_dev->gyro_bias[1] = 0.0f;
+    imu_dev->gyro_bias[2] = 0.0f;
+    imu_dev->q[0] = 1.0f;
+    imu_dev->q[1] = 0.0f;
+    imu_dev->q[2] = 0.0f;
+    imu_dev->q[3] = 0.0f;
+    imu_dev->kp = 50.0f;
+    imu_dev->ki = 0.0f;
+    imu_dev->calibrating = false;
+
+    imu_dev->prev_sample_time = pbdrv_clock_get_us();
+
     imu_dev->init_state = IMU_INIT_STATE_COMPLETE;
 
     PT_END(pt);
+}
+
+static void pbdrv_imu_update(pbdrv_imu_dev_t *imu_dev) {
+    // Gets the time between loops of the estimate code
+    uint32_t now = pbdrv_clock_get_us();
+    float dt = (now - imu_dev->prev_sample_time) / 1000000.0f;
+    imu_dev->prev_sample_time = now;
+
+    float a[3]; // Scaled Accelerometer value array
+
+    float g[3]; // Scaled Gyro value array
+
+    // Gets scaled IMU values
+    pbdrv_imu_accel_read(imu_dev, a);
+    pbdrv_imu_gyro_read(imu_dev, g);
+
+    if (imu_dev->calibrating) {
+        imu_dev->gyro_bias[0] += g[0];
+        imu_dev->gyro_bias[1] += g[1];
+        imu_dev->gyro_bias[2] += g[2];
+        imu_dev->sample_count++;
+    } else {
+        // Converts gyro values from deg/s to radians/s and applies gyro offset
+        for (int i = 0; i < 3; i++) {
+            g[i] = (g[i] - imu_dev->gyro_bias[i]) * 0.0174532925f;
+        }
+        mahony_update(imu_dev, a[0], a[1], a[2], g[0], g[1], g[2], dt);
+    }
 }
 
 PROCESS_THREAD(pbdrv_imu_lsm6ds3tr_c_stm32_process, ev, data) {
@@ -281,6 +399,7 @@ retry:
         }
 
         memcpy(&imu_dev->data[0], buf, NUM_DATA_BYTES);
+        pbdrv_imu_update(imu_dev);
     }
 
     PROCESS_END();
@@ -324,6 +443,53 @@ void pbdrv_imu_gyro_read(pbdrv_imu_dev_t *imu_dev, float *values) {
     values[0] = PBDRV_CONFIG_IMU_LSM6S3TR_C_STM32_SIGN_X * imu_dev->data[0] * imu_dev->gyro_scale;
     values[1] = PBDRV_CONFIG_IMU_LSM6S3TR_C_STM32_SIGN_Y * imu_dev->data[1] * imu_dev->gyro_scale;
     values[2] = PBDRV_CONFIG_IMU_LSM6S3TR_C_STM32_SIGN_Z * imu_dev->data[2] * imu_dev->gyro_scale;
+}
+
+void pbdrv_imu_quaternion_read(pbdrv_imu_dev_t *imu_dev, float *values) {
+    values[0] = imu_dev->q[0];
+    values[1] = imu_dev->q[1];
+    values[2] = imu_dev->q[2];
+    values[3] = imu_dev->q[3];
+}
+
+void pbdrv_imu_reset_heading(pbdrv_imu_dev_t *imu_dev) {
+    imu_dev->q[0] = 1.0f;
+    imu_dev->q[1] = 0.0f;
+    imu_dev->q[2] = 0.0f;
+    imu_dev->q[3] = 0.0f;
+}
+
+// Gathers calibration data for CalibrationTime seconds assuming the gyro is stationary, returns the bias and sets bias offsets.
+void pbdrv_imu_start_gyro_calibration(pbdrv_imu_dev_t *imu_dev) {
+    imu_dev->gyro_bias[0] = 0.0f;
+    imu_dev->gyro_bias[1] = 0.0f;
+    imu_dev->gyro_bias[2] = 0.0f;
+    imu_dev->sample_count = 0;
+    imu_dev->calibrating = true;
+}
+
+// Gathers calibration data for CalibrationTime seconds assuming the gyro is stationary, returns the bias and sets bias offsets.
+void pbdrv_imu_stop_gyro_calibration(pbdrv_imu_dev_t *imu_dev, float *values) {
+    imu_dev->calibrating = false;
+    imu_dev->gyro_bias[0] /= imu_dev->sample_count;
+    imu_dev->gyro_bias[1] /= imu_dev->sample_count;
+    imu_dev->gyro_bias[2] /= imu_dev->sample_count;
+
+    values[0] = imu_dev->gyro_bias[0];
+    values[1] = imu_dev->gyro_bias[1];
+    values[2] = imu_dev->gyro_bias[2];
+}
+
+// Gathers calibration data for CalibrationTime seconds, when the data has been collected it stores the offsets in the O
+void pbdrv_imu_set_gyro_bias(pbdrv_imu_dev_t *imu_dev, float x, float y, float z) {
+    imu_dev->gyro_bias[0] = x;
+    imu_dev->gyro_bias[1] = y;
+    imu_dev->gyro_bias[2] = z;
+}
+
+void pbdrv_imu_set_mahony_gains(pbdrv_imu_dev_t *imu_dev, float kp, float ki) {
+    imu_dev->kp = kp;
+    imu_dev->ki = ki;
 }
 
 #endif // PBDRV_CONFIG_IMU_LSM6S3TR_C_STM32

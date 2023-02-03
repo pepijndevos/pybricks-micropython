@@ -129,24 +129,33 @@ MP_DEFINE_CONST_FUN_OBJ_1(common_IMU_up_obj, common_IMU_up);
 // pybricks._common.IMU.tilt
 STATIC mp_obj_t common_IMU_tilt(mp_obj_t self_in) {
     common_IMU_obj_t *self = MP_OBJ_TO_PTR(self_in);
-
-    // Read acceleration in the user frame. In the future, we can make this
-    // more accurate by using the full IMU orientation.
-    float accl[3];
-    pbdrv_imu_accel_read(self->imu_dev, accl);
-    common_IMU_rotate_3d_axis(self, accl);
+    float q[4];
+    pbdrv_imu_quaternion_read(self->imu_dev, q);
 
     mp_obj_t tilt[2];
+
     // Pitch
-    float pitch = atan2f(-accl[0], sqrtf(accl[2] * accl[2] + accl[1] * accl[1]));
-    tilt[0] = mp_obj_new_int_from_float(pitch * 57.296f);
+    tilt[0] = mp_obj_new_float_from_f(-asinf(2.0 * (q[1] * q[3] - q[0] * q[2])) * 57.296f);
 
     // Roll
-    float roll = atan2f(accl[1], accl[2]);
-    tilt[1] = mp_obj_new_int_from_float(roll * 57.296f);
+    tilt[1] = mp_obj_new_float_from_f(
+        atan2f(2.0f * (q[0] * q[1] + q[2] * q[3]), q[0] * q[0] - q[1] * q[1] - q[2] * q[2] + q[3] * q[3]) * 57.296f);
+
     return mp_obj_new_tuple(2, tilt);
 }
 MP_DEFINE_CONST_FUN_OBJ_1(common_IMU_tilt_obj, common_IMU_tilt);
+
+// pybricks._common.IMU.heading
+STATIC mp_obj_t common_IMU_heading(mp_obj_t self_in) {
+    common_IMU_obj_t *self = MP_OBJ_TO_PTR(self_in);
+
+    float q[4];
+    pbdrv_imu_quaternion_read(self->imu_dev, q);
+
+    float heading = (atan2f(2.0 * (q[1] * q[2] + q[0] * q[3]), q[0] * q[0] + q[1] * q[1] - q[2] * q[2] - q[3] * q[3])) * 57.296f;
+    return mp_obj_new_float_from_f(heading);
+}
+MP_DEFINE_CONST_FUN_OBJ_1(common_IMU_heading_obj, common_IMU_heading);
 
 // pybricks._common.IMU.acceleration
 STATIC mp_obj_t common_IMU_acceleration(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
@@ -176,12 +185,79 @@ STATIC mp_obj_t common_IMU_angular_velocity(size_t n_args, const mp_obj_t *pos_a
 }
 STATIC MP_DEFINE_CONST_FUN_OBJ_KW(common_IMU_angular_velocity_obj, 1, common_IMU_angular_velocity);
 
+STATIC mp_obj_t common_IMU_quaternion(mp_obj_t self_in) {
+    common_IMU_obj_t *self = MP_OBJ_TO_PTR(self_in);
+
+    float values[4];
+    pbdrv_imu_quaternion_read(self->imu_dev, values);
+
+    return pb_type_Matrix_make_vector(4, values, false);
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_1(common_IMU_quaternion_obj, common_IMU_quaternion);
+
+STATIC mp_obj_t common_IMU_start_gyro_calibration(mp_obj_t self_in) {
+    common_IMU_obj_t *self = MP_OBJ_TO_PTR(self_in);
+    pbdrv_imu_start_gyro_calibration(self->imu_dev);
+    return mp_const_none;
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_1(common_IMU_start_gyro_calibration_obj, common_IMU_start_gyro_calibration);
+
+STATIC mp_obj_t common_IMU_stop_gyro_calibration(mp_obj_t self_in) {
+    common_IMU_obj_t *self = MP_OBJ_TO_PTR(self_in);
+
+    float values[3];
+    pbdrv_imu_stop_gyro_calibration(self->imu_dev, values);
+
+    return pb_type_Matrix_make_vector(3, values, false);
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_1(common_IMU_stop_gyro_calibration_obj, common_IMU_stop_gyro_calibration);
+
+STATIC mp_obj_t common_IMU_set_gyro_bias(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
+    PB_PARSE_ARGS_METHOD(n_args, pos_args, kw_args,
+        common_IMU_obj_t, self,
+        PB_ARG_REQUIRED(x),
+        PB_ARG_REQUIRED(y),
+        PB_ARG_REQUIRED(z));
+
+    float x = mp_obj_get_float_to_f(x_in);
+    float y = mp_obj_get_float_to_f(y_in);
+    float z = mp_obj_get_float_to_f(z_in);
+
+    pbdrv_imu_set_gyro_bias(self->imu_dev, x, y, z);
+    return mp_const_none;
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_KW(common_IMU_set_gyro_bias_obj, 4, common_IMU_set_gyro_bias);
+
+STATIC mp_obj_t common_IMU_reset_heading(mp_obj_t self_in) {
+    common_IMU_obj_t *self = MP_OBJ_TO_PTR(self_in);
+    pbdrv_imu_reset_heading(self->imu_dev);
+    return mp_const_none;
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_1(common_IMU_reset_heading_obj, common_IMU_reset_heading);
+
+STATIC mp_obj_t common_IMU_set_mahony_gains(mp_obj_t self_in, mp_obj_t kp_in, mp_obj_t ki_in) {
+    common_IMU_obj_t *self = MP_OBJ_TO_PTR(self_in);
+    float kp = mp_obj_get_float_to_f(kp_in);
+    float ki = mp_obj_get_float_to_f(ki_in);
+
+    pbdrv_imu_set_mahony_gains(self->imu_dev, kp, ki);
+    return mp_const_none;
+}
+STATIC MP_DEFINE_CONST_FUN_OBJ_3(common_IMU_set_mahony_gains_obj, common_IMU_set_mahony_gains);
+
 // dir(pybricks.common.IMU)
 STATIC const mp_rom_map_elem_t common_IMU_locals_dict_table[] = {
     { MP_ROM_QSTR(MP_QSTR_up),               MP_ROM_PTR(&common_IMU_up_obj)              },
     { MP_ROM_QSTR(MP_QSTR_tilt),             MP_ROM_PTR(&common_IMU_tilt_obj)            },
+    { MP_ROM_QSTR(MP_QSTR_heading),          MP_ROM_PTR(&common_IMU_heading_obj)         },
     { MP_ROM_QSTR(MP_QSTR_acceleration),     MP_ROM_PTR(&common_IMU_acceleration_obj)    },
     { MP_ROM_QSTR(MP_QSTR_angular_velocity), MP_ROM_PTR(&common_IMU_angular_velocity_obj)},
+    { MP_ROM_QSTR(MP_QSTR_quaternion),       MP_ROM_PTR(&common_IMU_quaternion_obj)      },
+    { MP_ROM_QSTR(MP_QSTR_start_gyro_calibration), MP_ROM_PTR(&common_IMU_start_gyro_calibration_obj) },
+    { MP_ROM_QSTR(MP_QSTR_stop_gyro_calibration), MP_ROM_PTR(&common_IMU_stop_gyro_calibration_obj) },
+    { MP_ROM_QSTR(MP_QSTR_set_gyro_bias),    MP_ROM_PTR(&common_IMU_set_gyro_bias_obj)   },
+    { MP_ROM_QSTR(MP_QSTR_reset_heading),    MP_ROM_PTR(&common_IMU_reset_heading_obj)   },
+    { MP_ROM_QSTR(MP_QSTR_set_mahony_gains), MP_ROM_PTR(&common_IMU_set_mahony_gains_obj)},
 };
 STATIC MP_DEFINE_CONST_DICT(common_IMU_locals_dict, common_IMU_locals_dict_table);
 
