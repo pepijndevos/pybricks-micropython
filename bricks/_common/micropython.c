@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Copyright (c) 2018-2022 The Pybricks Authors
+// Copyright (c) 2018-2023 The Pybricks Authors
 
 // This file provides a MicroPython runtime to run code in MULTI_MPY_V6 format.
 
@@ -298,6 +298,9 @@ void pbsys_main_run_program(pbsys_main_program_t *program) {
 
     // Clean up non-MicroPython resources used by the pybricks package.
     pb_package_pybricks_deinit();
+
+    // run all finalizers
+    gc_sweep_all();
 
     mp_deinit();
 }

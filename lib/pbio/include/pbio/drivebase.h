@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Copyright (c) 2018-2022 The Pybricks Authors
+// Copyright (c) 2018-2023 The Pybricks Authors
 
 /**
  * @addtogroup Drivebase pbio/drivebase: Drivebase motion control
@@ -11,19 +11,21 @@
 #ifndef _PBIO_DRIVEBASE_H_
 #define _PBIO_DRIVEBASE_H_
 
+#include <pbio/config.h>
 #include <pbio/servo.h>
 
-#if PBIO_CONFIG_NUM_DRIVEBASES > 0
+#if PBIO_CONFIG_DRIVEBASE
 
 typedef struct _pbio_drivebase_t {
+    void *next;
     pbio_servo_t *left;
     pbio_servo_t *right;
     pbio_control_t control_heading;
     pbio_control_t control_distance;
 } pbio_drivebase_t;
 
-pbio_error_t pbio_drivebase_get_drivebase(pbio_drivebase_t **db_address, pbio_servo_t *left, pbio_servo_t *right, int32_t wheel_diameter, int32_t axle_track);
-
+pbio_error_t pbio_drivebase_get_drivebase(pbio_drivebase_t *db, pbio_servo_t *left, pbio_servo_t *right, int32_t wheel_diameter, int32_t axle_track);
+void pbio_drivebase_put_drivebase(pbio_drivebase_t *db);
 // Drive base status:
 
 void pbio_drivebase_update_all(void);
@@ -52,7 +54,8 @@ pbio_error_t pbio_drivebase_set_drive_settings(pbio_drivebase_t *db, int32_t dri
 
 // SPIKE drive base wrappers:
 
-pbio_error_t pbio_drivebase_get_drivebase_spike(pbio_drivebase_t **db_address, pbio_servo_t *left, pbio_servo_t *right);
+pbio_error_t pbio_drivebase_get_drivebase_spike(pbio_drivebase_t *db, pbio_servo_t *left, pbio_servo_t *right);
+void pbio_drivebase_pet_drivebase_spike(pbio_drivebase_t *db);
 pbio_error_t pbio_drivebase_spike_drive_forever(pbio_drivebase_t *db, int32_t speed_left, int32_t speed_right);
 pbio_error_t pbio_drivebase_spike_drive_time(pbio_drivebase_t *db, int32_t speed_left, int32_t speed_right, int32_t duration, pbio_control_on_completion_t on_completion);
 pbio_error_t pbio_drivebase_spike_drive_angle(pbio_drivebase_t *db, int32_t speed_left, int32_t speed_right, int32_t angle, pbio_control_on_completion_t on_completion);
@@ -60,7 +63,7 @@ pbio_error_t pbio_drivebase_spike_steering_to_tank(int32_t speed, int32_t steeri
 
 #endif // PBIO_CONFIG_DRIVEBASE_SPIKE
 
-#endif // PBIO_CONFIG_NUM_DRIVEBASES > 0
+#endif // PBIO_CONFIG_DRIVEBASE
 
 #endif // _PBIO_DRIVEBASE_H_
 
